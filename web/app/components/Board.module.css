@@ -1,0 +1,117 @@
+.boardWrapper {
+    display: flex;
+    align-items: stretch;
+}
+
+.boardContainer {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto repeat(8, 1fr);
+    grid-template-rows: repeat(8, 1fr) auto;
+    width: 100%;
+    height: 100%;
+    border: 2px solid #333;
+    box-sizing: border-box;
+}
+
+.rankLabel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #888;
+    user-select: none;
+}
+
+.fileLabel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #888;
+    user-select: none;
+}
+
+.fileLabelCorner {
+    width: 20px;
+    height: 20px;
+}
+
+.square {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.light {
+    background-color: #f0d9b5;
+}
+
+.dark {
+    background-color: #b58863;
+}
+
+.selected {
+    background-color: #829769 !important;
+}
+
+.lastMove {
+    background-color: #cdd26a80;
+}
+
+.legalDot {
+    position: absolute;
+    width: 26%;
+    height: 26%;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.legalCapture {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border: 5px solid rgba(0, 0, 0, 0.25);
+    border-radius: 50%;
+    box-sizing: border-box;
+    pointer-events: none;
+    z-index: 1;
+}
+
+/* Promotion dialog */
+.promoOverlay {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    background: white;
+    border: 2px solid #333;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    z-index: 10;
+}
+
+.promoOption {
+    width: 60px;
+    height: 60px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s;
+}
+
+.promoOption:hover {
+    background: #e0e0e0;
+}

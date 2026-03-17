@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx tsx:*)",
+      "Bash(printf:*)",
+      "Bash(curl:*)",
+      "Bash(npx next build)",
+      "Bash(node:*)",
+      "WebSearch"
+    ]
+  }
+}
