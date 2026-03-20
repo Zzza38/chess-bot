@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Chess Bot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9.2.1/assets/chessground.base.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9.2.1/assets/chessground.brown.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9.2.1/assets/chessground.cburnett.css">
+    <style>
+        body {
+            background-color: #000;
+            color: white;
+            font-family: 'Roboto Mono', monospace;
+            font-variant-emoji: text;
+            letter-spacing: 0;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 24px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            width: 100%;
+            margin: 0 0 8px 0;
+        }
+
+        #left-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        #console {
+            font-family: 'Roboto Mono', monospace;
+            white-space: pre;
+            background: #000;
+            color: #fff;
+            padding: 20px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            line-height: 1.2;
+            width: 480px;
+            height: 520px;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+
+        #custom-prompt {
+            border: 1px solid #fff;
+            padding: 10px;
+            background: #111;
+            display: none;
+        }
+
+        #prompt-input {
+            background: #222;
+            color: #fff;
+            border: 1px solid #555;
+            font-family: 'Roboto Mono', monospace;
+            padding: 4px 8px;
+            font-size: 1em;
+            width: 280px;
+        }
+
+        #prompt-ok {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            font-family: 'Roboto Mono', monospace;
+            padding: 4px 12px;
+            cursor: pointer;
+            margin-left: 6px;
+        }
+
+        #boardDiv {
+            width: 400px;
+            height: 400px;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+
+<body>
+    <script>(function () { var script = document.createElement('script'); script.src = "https://cdn.jsdelivr.net/npm/eruda"; document.body.append(script); script.onload = function () { eruda.init(); } })();</script>
+
+    <div id="left-panel">
+        <h1>Chess Bot</h1>
+        <div id="console"></div>
+        <div id="custom-prompt">
+            <span id="prompt-message"></span><br>
+            <input type="text" id="prompt-input">
+            <button id="prompt-ok">OK</button>
+        </div>
+    </div>
+
+    <div id="boardDiv"></div>
+
+    <script>
+        // --- 1. Console Interception ---
+        const originalLog = console.log;
+        const consoleDiv = document.getElementById('console');
+
+        console.log = function (...args) {
+            if (consoleDiv) {
+                const msg = args.map(arg =>
+                    typeof arg === 'object' ? JSON.stringify(arg) : arg
+                ).join(' ');
+                consoleDiv.innerHTML += msg + '\n';
+                consoleDiv.scrollTop = consoleDiv.scrollHeight;
+            }
+            originalLog.apply(console, args);
+        };
+
+        // --- 2. Prompt Interception ---
+        const promptContainer = document.getElementById('custom-prompt');
+        const promptMsg = document.getElementById('prompt-message');
+        const promptInput = document.getElementById('prompt-input');
+        const promptOk = document.getElementById('prompt-ok');
+
+        window.prompt = function (message, defaultValue = "") {
+            promptMsg.innerText = message;
+            promptInput.value = defaultValue;
+            promptContainer.style.display = 'block';
+            promptInput.focus();
+
+            return new Promise((resolve) => {
+                const submit = () => {
+                    const val = promptInput.value;
+                    promptContainer.style.display = 'none';
+                    promptInput.removeEventListener('keydown', handleKeyDown);
+                    resolve(val);
+                };
+
+                const handleKeyDown = (e) => {
+                    if (e.key === 'Enter') submit();
+                };
+
+                promptOk.onclick = submit;
+                promptInput.addEventListener('keydown', handleKeyDown);
+            });
+        };
+    </script>
+
+    <script type="module">
+        import { Chessground } from 'https://cdn.jsdelivr.net/npm/chessground@9.2.1/dist/chessground.min.js';
+
+        // Piece-Square Tables (from white's perspective, index 0 = rank 1 / a-file)
+        // Flipped vertically for black.
+        export const PST = {
+            pawn: [
+                0, 0, 0, 0, 0, 0, 0, 0,
+                50, 50, 50, 50, 50, 50, 50, 50,
+                10, 10, 20, 30, 30, 20, 10, 10,
+                5, 5, 10, 25, 25, 10, 5, 5,
+                0, 0, 0, 20, 20, 0, 0, 0,
+                5, -5, -10, 0, 0, -10, -5, 5,
+                5, 10, 10, -20, -20, 10, 10, 5,
+                0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            knight: [
+                -50, -40, -30, -30, -30, -30, -40, -50,
+                -40, -20, 0, 0, 0, 0, -20, -40,
+                -30, 0, 10, 15, 15, 10, 0, -30,
+                -30, 5, 15, 20, 20, 15, 5, -30,
+                -30, 0, 15, 20, 20, 15, 0, -30,
+                -30, 5, 10, 15, 15, 10, 5, -30,
+                -40, -20, 0, 5, 5, 0, -20, -40,
+                -50, -40, -30, -30, -30, -30, -40, -50,
+            ],
+            bishop: [
+                -20, -10, -10, -10, -10, -10, -10, -20,
+                -10, 0, 0, 0, 0, 0, 0, -10,
+                -10, 0, 10, 10, 10, 10, 0, -10,
+                -10, 5, 5, 10, 10, 5, 5, -10,
+                -10, 0, 5, 10, 10, 5, 0, -10,
+                -10, 10, 10, 10, 10, 10, 10, -10,
+                -10, 5, 0, 0, 0, 0, 5, -10,
+                -20, -10, -10, -10, -10, -10, -10, -20,
+            ],
+            rook: [
+                0, 0, 0, 0, 0, 0, 0, 0,
+                5, 10, 10, 10, 10, 10, 10, 5,
+                -5, 0, 0, 0, 0, 0, 0, -5,
+                -5, 0, 0, 0, 0, 0, 0, -5,
+                -5, 0, 0, 0, 0, 0, 0, -5,
+                -5, 0, 0, 0, 0, 0, 0, -5,
+                -5, 0, 0, 0, 0, 0, 0, -5,
+                0, 0, 0, 5, 5, 0, 0, 0,
+            ],
+            queen: [
+                -20, -10, -10, -5, -5, -10, -10, -20,
+                -10, 0, 0, 0, 0, 0, 0, -10,
+                -10, 0, 5, 5, 5, 5, 0, -10,
+                -5, 0, 5, 5, 5, 5, 0, -5,
+                0, 0, 5, 5, 5, 5, 0, -5,
+                -10, 5, 5, 5, 5, 5, 0, -10,
+                -10, 0, 5, 0, 0, 0, 0, -10,
+                -20, -10, -10, -5, -5, -10, -10, -20,
+            ],
+            king: [
+                -30, -40, -40, -50, -50, -40, -40, -30,
+                -30, -40, -40, -50, -50, -40, -40, -30,
+                -30, -40, -40, -50, -50, -40, -40, -30,
+                -30, -40, -40, -50, -50, -40, -40, -30,
+                -20, -30, -30, -40, -40, -30, -30, -20,
+                -10, -20, -20, -20, -20, -20, -20, -10,
+                20, 20, 0, 0, 0, 0, 20, 20,
+                20, 30, 10, 0, 0, 10, 30, 20,
+            ],
+        };
+
+        export function getPstValue(piece, color, x, y) {
+            const table = PST[piece];
+            if (!table) return 0;
+            const index = color === "white" ? (7 - y) * 8 + x : y * 8 + x;
+            return table[index];
+        }
+
+        export class ChessBot {
+            constructor(fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") {
+                this._ttable = new Map();
+                this.board = {
+                    cells: [],
+                    turn: "white",
+                    canCastle: {
+                        white: { kingside: true, queenside: true },
+                        black: { kingside: true, queenside: true },
+                    },
+                    didCastle: { white: false, black: false },
+                    enpassant: null,
+                };
+                for (let i = 0; i < 8; i++) {
+                    this.board.cells[i] = [];
+                    for (let j = 0; j < 8; j++) {
+                        this.board.cells[i][j] = { type: { piece: "pawn", color: "empty" } };
+                    }
+                }
+                this._parse_fen(fen);
+            }
+            getAvailableMoves(board = this.board) {
+                const roots = [];
+                for (let x = 0; x < 8; x++) {
+                    for (let y = 0; y < 8; y++) {
+                        const cell = board.cells[y][x];
+                        if (cell.type.color !== board.turn) continue;
+                        const childBoards = this._getAvailableMovesForCell(cell, { x, y }, board);
+                        for (const childBoard of childBoards) {
+                            roots.push({ board: childBoard, children: [] });
+                        }
+                    }
+                }
+                return roots;
+            }
+            printBoard(board = this.board) {
+                console.log(board.cells
+                    .map((row) => row
+                        .map((cell) => {
+                            if (cell.type.color === "empty") return "-";
+                            const pieceMap = { pawn: "p", knight: "n", bishop: "b", rook: "r", queen: "q", king: "k" };
+                            const piece = pieceMap[cell.type.piece];
+                            return cell.type.color === "white" ? piece.toUpperCase() : piece;
+                        })
+                        .join(" "))
+                    .join("\n"));
+            }
+            getBoardValue(board = this.board) {
+                let reward = 0;
+                const materialValues = { pawn: 100, knight: 320, bishop: 330, rook: 500, queen: 900, king: 20000 };
+                let whiteBishops = 0, blackBishops = 0;
+                let whiteKingPos = null, blackKingPos = null;
+                for (let y = 0; y < 8; y++) {
+                    for (let x = 0; x < 8; x++) {
+                        const cell = board.cells[y][x];
+                        if (cell.type.color === "empty") continue;
+                        const sign = cell.type.color === "white" ? 1 : -1;
+                        const piece = cell.type.piece;
+                        const color = cell.type.color;
+                        reward += sign * materialValues[piece];
+                        reward += sign * getPstValue(piece, color, x, y);
+                        if (piece === "bishop") { color === "white" ? whiteBishops++ : blackBishops++; }
+                        if (piece === "king") {
+                            if (color === "white") whiteKingPos = { x, y };
+                            else blackKingPos = { x, y };
+                        }
+                        if (piece === "rook") {
+                            if (color === "white" && y === 6) reward += 40;
+                            if (color === "black" && y === 1) reward -= 40;
+                        }
+                    }
+                }
+                if (whiteBishops >= 2) reward += 50;
+                if (blackBishops >= 2) reward -= 50;
+                if (board.didCastle.white) reward += 60;
+                if (board.didCastle.black) reward -= 60;
+                const whitePawnsPerFile = new Array(8).fill(0);
+                const blackPawnsPerFile = new Array(8).fill(0);
+                const whiteRooksPerFile = new Array(8).fill(0);
+                const blackRooksPerFile = new Array(8).fill(0);
+                for (let x = 0; x < 8; x++) {
+                    for (let y = 0; y < 8; y++) {
+                        const cell = board.cells[y][x];
+                        if (cell.type.color === "empty") continue;
+                        if (cell.type.piece === "pawn") { cell.type.color === "white" ? whitePawnsPerFile[x]++ : blackPawnsPerFile[x]++; }
+                        if (cell.type.piece === "rook") { cell.type.color === "white" ? whiteRooksPerFile[x]++ : blackRooksPerFile[x]++; }
+                    }
+                }
+                for (let x = 0; x < 8; x++) {
+                    if (whitePawnsPerFile[x] > 1) reward -= 20 * (whitePawnsPerFile[x] - 1);
+                    if (blackPawnsPerFile[x] > 1) reward += 20 * (blackPawnsPerFile[x] - 1);
+                    if (whitePawnsPerFile[x] > 0) {
+                        const hasNeighbor = (x > 0 && whitePawnsPerFile[x - 1] > 0) || (x < 7 && whitePawnsPerFile[x + 1] > 0);
+                        if (!hasNeighbor) reward -= 15 * whitePawnsPerFile[x];
+                    }
+                    if (blackPawnsPerFile[x] > 0) {
+                        const hasNeighbor = (x > 0 && blackPawnsPerFile[x - 1] > 0) || (x < 7 && blackPawnsPerFile[x + 1] > 0);
+                        if (!hasNeighbor) reward += 15 * blackPawnsPerFile[x];
+                    }
+                    if (whitePawnsPerFile[x] > 0 && blackPawnsPerFile[x] === 0) {
+                        for (let y = 7; y >= 0; y--) {
+                            const c = board.cells[y][x];
+                            if (c.type.piece === "pawn" && c.type.color === "white") {
+                                let passed = true;
+                                for (let fy = y + 1; fy < 8; fy++) {
+                                    if (x > 0 && board.cells[fy][x - 1].type.piece === "pawn" && board.cells[fy][x - 1].type.color === "black") { passed = false; break; }
+                                    if (x < 7 && board.cells[fy][x + 1].type.piece === "pawn" && board.cells[fy][x + 1].type.color === "black") { passed = false; break; }
+                                }
+                                if (passed) reward += 30 + (y > 3 ? (y - 3) * 15 : 0);
+                                break;
+                            }
+                        }
+                    }
+                    if (blackPawnsPerFile[x] > 0 && whitePawnsPerFile[x] === 0) {
+                        for (let y = 0; y < 8; y++) {
+                            const c = board.cells[y][x];
+                            if (c.type.piece === "pawn" && c.type.color === "black") {
+                                let passed = true;
+                                for (let fy = y - 1; fy >= 0; fy--) {
+                                    if (x > 0 && board.cells[fy][x - 1].type.piece === "pawn" && board.cells[fy][x - 1].type.color === "white") { passed = false; break; }
+                                    if (x < 7 && board.cells[fy][x + 1].type.piece === "pawn" && board.cells[fy][x + 1].type.color === "white") { passed = false; break; }
+                                }
+                                if (passed) reward -= 30 + (y < 4 ? (4 - y) * 15 : 0);
+                                break;
+                            }
+                        }
+                    }
+                    if (whiteRooksPerFile[x] > 0 && whitePawnsPerFile[x] === 0 && blackPawnsPerFile[x] === 0) reward += 25;
+                    if (blackRooksPerFile[x] > 0 && whitePawnsPerFile[x] === 0 && blackPawnsPerFile[x] === 0) reward -= 25;
+                    if (whiteRooksPerFile[x] > 0 && whitePawnsPerFile[x] === 0 && blackPawnsPerFile[x] > 0) reward += 15;
+                    if (blackRooksPerFile[x] > 0 && blackPawnsPerFile[x] === 0 && whitePawnsPerFile[x] > 0) reward -= 15;
+                }
+                const countPawnShield = (kingPos, color) => {
+                    let count = 0;
+                    const dir = color === "white" ? 1 : -1;
+                    for (let dx = -1; dx <= 1; dx++) {
+                        for (let dy = 1; dy <= 2; dy++) {
+                            const nx = kingPos.x + dx, ny = kingPos.y + dir * dy;
+                            if (nx >= 0 && nx < 8 && ny >= 0 && ny < 8) {
+                                const cell = board.cells[ny][nx];
+                                if (cell.type.piece === "pawn" && cell.type.color === color) count++;
+                            }
+                        }
+                    }
+                    return count;
+                };
+                if (whiteKingPos) reward += countPawnShield(whiteKingPos, "white") * 10;
+                if (blackKingPos) reward -= countPawnShield(blackKingPos, "black") * 10;
+                if (this._isInCheck(board.turn, board)) { reward += board.turn === "white" ? -100 : 100; }
+                return reward;
+            }
+            getBoardValueBreakdown(board = this.board) {
+                const b = {
+                    material: 0, pst: 0, bishopPair: 0, castling: 0, rookSeventh: 0,
+                    doubledPawns: 0, isolatedPawns: 0, passedPawns: 0,
+                    rookOpenFile: 0, rookSemiOpenFile: 0, kingSafety: 0, checkPenalty: 0, total: 0,
+                };
+                const materialValues = { pawn: 100, knight: 320, bishop: 330, rook: 500, queen: 900, king: 20000 };
+                let whiteBishops = 0, blackBishops = 0;
+                let whiteKingPos = null, blackKingPos = null;
+                for (let y = 0; y < 8; y++) {
+                    for (let x = 0; x < 8; x++) {
+                        const cell = board.cells[y][x];
+                        if (cell.type.color === "empty") continue;
+                        const sign = cell.type.color === "white" ? 1 : -1;
+                        const piece = cell.type.piece;
+                        const color = cell.type.color;
+                        b.material += sign * materialValues[piece];
+                        b.pst += sign * getPstValue(piece, color, x, y);
+                        if (piece === "bishop") color === "white" ? whiteBishops++ : blackBishops++;
+                        if (piece === "king") { if (color === "white") whiteKingPos = { x, y }; else blackKingPos = { x, y }; }
+                        if (piece === "rook") {
+                            if (color === "white" && y === 6) b.rookSeventh += 40;
+                            if (color === "black" && y === 1) b.rookSeventh -= 40;
+                        }
+                    }
+                }
+                if (whiteBishops >= 2) b.bishopPair += 50;
+                if (blackBishops >= 2) b.bishopPair -= 50;
+                if (board.didCastle.white) b.castling += 60;
+                if (board.didCastle.black) b.castling -= 60;
+                const whitePawnsPerFile = new Array(8).fill(0);
+                const blackPawnsPerFile = new Array(8).fill(0);
+                const whiteRooksPerFile = new Array(8).fill(0);
+                const blackRooksPerFile = new Array(8).fill(0);
+                for (let x = 0; x < 8; x++) {
+                    for (let y = 0; y < 8; y++) {
+                        const cell = board.cells[y][x];
+                        if (cell.type.color === "empty") continue;
+                        if (cell.type.piece === "pawn") { cell.type.color === "white" ? whitePawnsPerFile[x]++ : blackPawnsPerFile[x]++; }
+                        if (cell.type.piece === "rook") { cell.type.color === "white" ? whiteRooksPerFile[x]++ : blackRooksPerFile[x]++; }
+                    }
+                }
+                for (let x = 0; x < 8; x++) {
+                    if (whitePawnsPerFile[x] > 1) b.doubledPawns -= 20 * (whitePawnsPerFile[x] - 1);
+                    if (blackPawnsPerFile[x] > 1) b.doubledPawns += 20 * (blackPawnsPerFile[x] - 1);
+                    if (whitePawnsPerFile[x] > 0) {
+                        const hasNeighbor = (x > 0 && whitePawnsPerFile[x - 1] > 0) || (x < 7 && whitePawnsPerFile[x + 1] > 0);
+                        if (!hasNeighbor) b.isolatedPawns -= 15 * whitePawnsPerFile[x];
+                    }
+                    if (blackPawnsPerFile[x] > 0) {
+                        const hasNeighbor = (x > 0 && blackPawnsPerFile[x - 1] > 0) || (x < 7 && blackPawnsPerFile[x + 1] > 0);
+                        if (!hasNeighbor) b.isolatedPawns += 15 * blackPawnsPerFile[x];
+                    }
+                    if (whitePawnsPerFile[x] > 0 && blackPawnsPerFile[x] === 0) {
+                        for (let y = 7; y >= 0; y--) {
+                            const c = board.cells[y][x];
+                            if (c.type.piece === "pawn" && c.type.color === "white") {
+                                let passed = true;
+                                for (let fy = y + 1; fy < 8; fy++) {
+                                    if (x > 0 && board.cells[fy][x - 1].type.piece === "pawn" && board.cells[fy][x - 1].type.color === "black") { passed = false; break; }
+                                    if (x < 7 && board.cells[fy][x + 1].type.piece === "pawn" && board.cells[fy][x + 1].type.color === "black") { passed = false; break; }
+                                }
+                                if (passed) b.passedPawns += 30 + (y > 3 ? (y - 3) * 15 : 0);
+                                break;
+                            }
+                        }
+                    }
+                    if (blackPawnsPerFile[x] > 0 && whitePawnsPerFile[x] === 0) {
+                        for (let y = 0; y < 8; y++) {
+                            const c = board.cells[y][x];
+                            if (c.type.piece === "pawn" && c.type.color === "black") {
+                                let passed = true;
+                                for (let fy = y - 1; fy >= 0; fy--) {
+                                    if (x > 0 && board.cells[fy][x - 1].type.piece === "pawn" && board.cells[fy][x - 1].type.color === "white") { passed = false; break; }
+                                    if (x < 7 && board.cells[fy][x + 1].type.piece === "pawn" && board.cells[fy][x + 1].type.color === "white") { passed = false; break; }
+                                }
+                                if (passed) b.passedPawns -= 30 + (y < 4 ? (4 - y) * 15 : 0);
+                                break;
+                            }
+                        }
+                    }
+                    if (whiteRooksPerFile[x] > 0 && whitePawnsPerFile[x] === 0 && blackPawnsPerFile[x] === 0) b.rookOpenFile += 25;
+                    if (blackRooksPerFile[x] > 0 && whitePawnsPerFile[x] === 0 && blackPawnsPerFile[x] === 0) b.rookOpenFile -= 25;
+                    if (whiteRooksPerFile[x] > 0 && whitePawnsPerFile[x] === 0 && blackPawnsPerFile[x] > 0) b.rookSemiOpenFile += 15;
+                    if (blackRooksPerFile[x] > 0 && blackPawnsPerFile[x] === 0 && whitePawnsPerFile[x] > 0) b.rookSemiOpenFile -= 15;
+                }
+                const countPawnShield = (kingPos, color) => {
+                    let count = 0;
+                    const dir = color === "white" ? 1 : -1;
+                    for (let dx = -1; dx <= 1; dx++) {
+                        for (let dy = 1; dy <= 2; dy++) {
+                            const nx = kingPos.x + dx, ny = kingPos.y + dir * dy;
+                            if (nx >= 0 && nx < 8 && ny >= 0 && ny < 8) {
+                                if (board.cells[ny][nx].type.piece === "pawn" && board.cells[ny][nx].type.color === color) count++;
+                            }
+                        }
+                    }
+                    return count;
+                };
+                if (whiteKingPos) b.kingSafety += countPawnShield(whiteKingPos, "white") * 10;
+                if (blackKingPos) b.kingSafety -= countPawnShield(blackKingPos, "black") * 10;
+                if (this._isInCheck(board.turn, board)) { b.checkPenalty += board.turn === "white" ? -100 : 100; }
+                b.total = b.material + b.pst + b.bishopPair + b.castling + b.rookSeventh
+                    + b.doubledPawns + b.isolatedPawns + b.passedPawns
+                    + b.rookOpenFile + b.rookSemiOpenFile + b.kingSafety + b.checkPenalty;
+                return b;
+            }
+            getRankedMoves(depth = 1, board = this.board) {
+                this._ttable.clear();
+                const legalMoves = this._generateLegalMoves(board);
+                if (legalMoves.length === 0) return [];
+                const maximizing = board.turn === "white";
+                legalMoves.sort((a, b) => {
+                    const aVal = this._quickMaterialCount(a);
+                    const bVal = this._quickMaterialCount(b);
+                    return maximizing ? bVal - aVal : aVal - bVal;
+                });
+                const scored = [];
+                let alpha = -Infinity, beta = Infinity;
+                for (const move of legalMoves) {
+                    const score = this._alphaBeta(move, depth - 1, alpha, beta, !maximizing);
+                    scored.push({ score, board: move });
+                    if (maximizing) alpha = Math.max(alpha, score);
+                    else beta = Math.min(beta, score);
+                }
+                scored.sort((a, b) => maximizing ? b.score - a.score : a.score - b.score);
+                return scored.map(s => ({
+                    notation: this._toChessNotation(board, s.board),
+                    board: s.board,
+                    score: s.score,
+                }));
+            }
+            makeMove(notation) {
+                const possibleMoves = this.getAvailableMoves(this.board);
+                const legalMoves = possibleMoves.filter((m) => !this._isInCheck(this.board.turn, m.board));
+                for (const move of legalMoves) {
+                    const moveNotation = this._toChessNotation(this.board, move.board);
+                    if (moveNotation === notation) { this.board = move.board; return true; }
+                }
+                const stripped = notation.replace(/[+#]$/, "");
+                for (const move of legalMoves) {
+                    const moveNotation = this._toChessNotation(this.board, move.board).replace(/[+#]$/, "");
+                    if (moveNotation === stripped) { this.board = move.board; return true; }
+                }
+                return false;
+            }
+            _toChessNotation(fromBoard, toBoard) {
+                const turn = fromBoard.turn;
+                for (let y = 0; y < 8; y++) {
+                    for (let x = 0; x < 8; x++) {
+                        if (fromBoard.cells[y][x].type.piece === "king" && fromBoard.cells[y][x].type.color === turn) {
+                            for (let x2 = 0; x2 < 8; x2++) {
+                                if (toBoard.cells[y][x2].type.piece === "king" && toBoard.cells[y][x2].type.color === turn) {
+                                    if (Math.abs(x2 - x) === 2) return x2 > x ? "O-O" : "O-O-O";
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                let fromPos = null, toPos = null, movedPiece = null, capturedPiece = null;
+                for (let y = 0; y < 8; y++) {
+                    for (let x = 0; x < 8; x++) {
+                        const fromCell = fromBoard.cells[y][x];
+                        const toCell = toBoard.cells[y][x];
+                        if (fromCell.type.color === turn && toCell.type.color !== turn) {
+                            if (!fromPos) { fromPos = { x, y }; movedPiece = fromCell.type; }
+                        }
+                        if (toCell.type.color === turn && fromCell.type.color !== turn) {
+                            if (!toPos) { toPos = { x, y }; }
+                        }
+                        if (fromCell.type.color !== "empty" && fromCell.type.color !== turn && toCell.type.color !== fromCell.type.color) {
+                            capturedPiece = fromCell.type;
+                        }
+                    }
+                }
+                if (!fromPos || !toPos || !movedPiece) return "invalid";
+                const files = "abcdefgh";
+                const fromFile = files[fromPos.x], fromRank = (fromPos.y + 1).toString();
+                const toFile = files[toPos.x], toRank = (toPos.y + 1).toString();
+                let notation = "";
+                const pieceMap = { knight: "N", bishop: "B", rook: "R", queen: "Q", king: "K" };
+                if (movedPiece.piece !== "pawn") {
+                    notation += pieceMap[movedPiece.piece] || "";
+                    let sameFile = false, sameRank = false, ambiguous = false;
+                    for (let y = 0; y < 8; y++) {
+                        for (let x = 0; x < 8; x++) {
+                            if (x === fromPos.x && y === fromPos.y) continue;
+                            const c = fromBoard.cells[y][x];
+                            if (c.type.piece === movedPiece.piece && c.type.color === turn) {
+                                const canReach = this._canPieceReach(c.type.piece, x, y, toPos.x, toPos.y, fromBoard);
+                                if (canReach) {
+                                    ambiguous = true;
+                                    if (x === fromPos.x) sameFile = true;
+                                    if (y === fromPos.y) sameRank = true;
+                                }
+                            }
+                        }
+                    }
+                    if (ambiguous) {
+                        if (sameFile && sameRank) notation += fromFile + fromRank;
+                        else if (sameFile) notation += fromRank;
+                        else notation += fromFile;
+                    }
+                }
+                if (movedPiece.piece === "pawn" && capturedPiece) notation += fromFile;
+                if (capturedPiece) notation += "x";
+                notation += toFile + toRank;
+                if (movedPiece.piece === "pawn") {
+                    const destPiece = toBoard.cells[toPos.y][toPos.x].type.piece;
+                    if (destPiece !== "pawn") notation += "=" + (pieceMap[destPiece] || "Q");
+                }
+                return notation;
+            }
+            _canPieceReach(piece, fromX, fromY, toX, toY, board) {
+                const dx = toX - fromX, dy = toY - fromY;
+                const adx = Math.abs(dx), ady = Math.abs(dy);
+                switch (piece) {
+                    case "knight": return (adx === 2 && ady === 1) || (adx === 1 && ady === 2);
+                    case "king": return adx <= 1 && ady <= 1;
+                    case "bishop": if (adx !== ady || adx === 0) return false; return this._isSlideClear(fromX, fromY, toX, toY, board);
+                    case "rook": if (dx !== 0 && dy !== 0) return false; return this._isSlideClear(fromX, fromY, toX, toY, board);
+                    case "queen": if (dx !== 0 && dy !== 0 && adx !== ady) return false; return this._isSlideClear(fromX, fromY, toX, toY, board);
+                    default: return false;
+                }
+            }
+            _isSlideClear(fromX, fromY, toX, toY, board) {
+                const sx = Math.sign(toX - fromX), sy = Math.sign(toY - fromY);
+                let cx = fromX + sx, cy = fromY + sy;
+                while (cx !== toX || cy !== toY) {
+                    if (board.cells[cy][cx].type.color !== "empty") return false;
+                    cx += sx; cy += sy;
+                }
+                return true;
+            }
+            _copyBoard(board) {
+                const cells = new Array(8);
+                for (let y = 0; y < 8; y++) {
+                    const row = board.cells[y];
+                    const newRow = new Array(8);
+                    for (let x = 0; x < 8; x++) {
+                        newRow[x] = { type: { piece: row[x].type.piece, color: row[x].type.color } };
+                    }
+                    cells[y] = newRow;
+                }
+                return {
+                    cells,
+                    turn: board.turn,
+                    canCastle: {
+                        white: { kingside: board.canCastle.white.kingside, queenside: board.canCastle.white.queenside },
+                        black: { kingside: board.canCastle.black.kingside, queenside: board.canCastle.black.queenside },
+                    },
+                    didCastle: { white: board.didCastle.white, black: board.didCastle.black },
+                    enpassant: board.enpassant ? { x: board.enpassant.x, y: board.enpassant.y } : null,
+                };
+            }
+            _isInCheck(color, board) {
+                let kingPos = null;
+                for (let x = 0; x < 8; x++) {
+                    for (let y = 0; y < 8; y++) {
+                        const cell = board.cells[y][x];
+                        if (cell.type.piece === "king" && cell.type.color === color) { kingPos = { x, y }; break; }
+                    }
+                    if (kingPos) break;
+                }
+                if (!kingPos) return false;
+                return this._isAttackedBy(kingPos.x, kingPos.y, color === "white" ? "black" : "white", board);
+            }
+            _isAttackedBy(tx, ty, attacker, board) {
+                const inBounds = (x, y) => x >= 0 && x < 8 && y >= 0 && y < 8;
+                const aDir = attacker === "white" ? 1 : -1;
+                if (inBounds(tx - 1, ty - aDir) && board.cells[ty - aDir][tx - 1].type.color === attacker && board.cells[ty - aDir][tx - 1].type.piece === "pawn") return true;
+                if (inBounds(tx + 1, ty - aDir) && board.cells[ty - aDir][tx + 1].type.color === attacker && board.cells[ty - aDir][tx + 1].type.piece === "pawn") return true;
+                for (const [dx, dy] of [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]]) {
+                    const nx = tx + dx, ny = ty + dy;
+                    if (inBounds(nx, ny) && board.cells[ny][nx].type.color === attacker && board.cells[ny][nx].type.piece === "knight") return true;
+                }
+                for (const [dx, dy] of [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]) {
+                    const nx = tx + dx, ny = ty + dy;
+                    if (inBounds(nx, ny) && board.cells[ny][nx].type.color === attacker && board.cells[ny][nx].type.piece === "king") return true;
+                }
+                for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                    let cx = tx + dx, cy = ty + dy;
+                    while (inBounds(cx, cy)) {
+                        const p = board.cells[cy][cx].type;
+                        if (p.color !== "empty") { if (p.color === attacker && (p.piece === "rook" || p.piece === "queen")) return true; break; }
+                        cx += dx; cy += dy;
+                    }
+                }
+                for (const [dx, dy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+                    let cx = tx + dx, cy = ty + dy;
+                    while (inBounds(cx, cy)) {
+                        const p = board.cells[cy][cx].type;
+                        if (p.color !== "empty") { if (p.color === attacker && (p.piece === "bishop" || p.piece === "queen")) return true; break; }
+                        cx += dx; cy += dy;
+                    }
+                }
+                return false;
+            }
+            _getAvailableMovesForCell(cell, position, board = this.board) {
+                const moves = [];
+                const { x, y } = position;
+                const color = cell.type.color;
+                const enemy = color === "white" ? "black" : "white";
+                const inBounds = (x, y) => x >= 0 && x < 8 && y >= 0 && y < 8;
+                const isEmpty = (x, y) => board.cells[y][x].type.color === "empty";
+                const isEnemy = (x, y) => board.cells[y][x].type.color !== "empty" && board.cells[y][x].type.color === enemy;
+                const addMove = (toX, toY, extra) => {
+                    if (!inBounds(toX, toY)) return;
+                    const boardCopy = this._copyBoard(board);
+                    boardCopy.cells[toY][toX].type = Object.assign({}, cell.type);
+                    boardCopy.cells[y][x].type = { piece: "pawn", color: "empty" };
+                    boardCopy.enpassant = null;
+                    boardCopy.turn = enemy;
+                    if (cell.type.piece === "king") {
+                        boardCopy.canCastle[color].kingside = false;
+                        boardCopy.canCastle[color].queenside = false;
+                    }
+                    if (cell.type.piece === "rook") {
+                        if (x === 0 && y === (color === "white" ? 0 : 7)) boardCopy.canCastle[color].queenside = false;
+                        if (x === 7 && y === (color === "white" ? 0 : 7)) boardCopy.canCastle[color].kingside = false;
+                    }
+                    if (toX === 0 && toY === (enemy === "white" ? 0 : 7)) boardCopy.canCastle[enemy].queenside = false;
+                    if (toX === 7 && toY === (enemy === "white" ? 0 : 7)) boardCopy.canCastle[enemy].kingside = false;
+                    if (extra) extra(boardCopy);
+                    moves.push(boardCopy);
+                };
+                const addIfEmptyOrEnemy = (toX, toY) => {
+                    if (!inBounds(toX, toY)) return false;
+                    if (isEmpty(toX, toY)) { addMove(toX, toY); return true; }
+                    if (isEnemy(toX, toY)) { addMove(toX, toY); return false; }
+                    return false;
+                };
+                const addSliding = (dx, dy) => {
+                    let cx = x + dx, cy = y + dy;
+                    while (inBounds(cx, cy)) { if (!addIfEmptyOrEnemy(cx, cy)) break; cx += dx; cy += dy; }
+                };
+                const isAttackedBy = (tx, ty, attacker) => {
+                    const aDir = attacker === "white" ? 1 : -1;
+                    if (inBounds(tx - 1, ty - aDir) && board.cells[ty - aDir][tx - 1].type.color === attacker && board.cells[ty - aDir][tx - 1].type.piece === "pawn") return true;
+                    if (inBounds(tx + 1, ty - aDir) && board.cells[ty - aDir][tx + 1].type.color === attacker && board.cells[ty - aDir][tx + 1].type.piece === "pawn") return true;
+                    for (const [dx, dy] of [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]]) {
+                        const nx = tx + dx, ny = ty + dy;
+                        if (inBounds(nx, ny) && board.cells[ny][nx].type.color === attacker && board.cells[ny][nx].type.piece === "knight") return true;
+                    }
+                    for (const [dx, dy] of [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]) {
+                        const nx = tx + dx, ny = ty + dy;
+                        if (inBounds(nx, ny) && board.cells[ny][nx].type.color === attacker && board.cells[ny][nx].type.piece === "king") return true;
+                    }
+                    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                        let cx = tx + dx, cy = ty + dy;
+                        while (inBounds(cx, cy)) {
+                            const p = board.cells[cy][cx].type;
+                            if (p.color !== "empty") { if (p.color === attacker && (p.piece === "rook" || p.piece === "queen")) return true; break; }
+                            cx += dx; cy += dy;
+                        }
+                    }
+                    for (const [dx, dy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+                        let cx = tx + dx, cy = ty + dy;
+                        while (inBounds(cx, cy)) {
+                            const p = board.cells[cy][cx].type;
+                            if (p.color !== "empty") { if (p.color === attacker && (p.piece === "bishop" || p.piece === "queen")) return true; break; }
+                            cx += dx; cy += dy;
+                        }
+                    }
+                    return false;
+                };
+                switch (cell.type.piece) {
+                    case "pawn": {
+                        const dir = color === "white" ? 1 : -1;
+                        const startRank = color === "white" ? 1 : 6;
+                        const promoRank = color === "white" ? 7 : 0;
+                        const isPromo = (y + dir) === promoRank;
+                        const addPromoMoves = (toX, toY, extraBefore) => {
+                            if (isPromo) {
+                                for (const promo of ["queen", "rook", "bishop", "knight"]) {
+                                    addMove(toX, toY, (b) => { if (extraBefore) extraBefore(b); b.cells[toY][toX].type = { piece: promo, color }; });
+                                }
+                            } else { addMove(toX, toY, extraBefore); }
+                        };
+                        if (inBounds(x, y + dir) && isEmpty(x, y + dir)) {
+                            addPromoMoves(x, y + dir);
+                            if (!isPromo && y === startRank && isEmpty(x, y + dir * 2)) {
+                                addMove(x, y + dir * 2, (b) => { b.enpassant = { x, y: y + dir }; });
+                            }
+                        }
+                        if (inBounds(x - 1, y + dir) && isEnemy(x - 1, y + dir)) addPromoMoves(x - 1, y + dir);
+                        if (inBounds(x + 1, y + dir) && isEnemy(x + 1, y + dir)) addPromoMoves(x + 1, y + dir);
+                        if (board.enpassant) {
+                            const ep = board.enpassant;
+                            if (ep.x === x - 1 && ep.y === y + dir) addMove(x - 1, y + dir, (b) => { b.cells[y][x - 1].type = { piece: "pawn", color: "empty" }; });
+                            if (ep.x === x + 1 && ep.y === y + dir) addMove(x + 1, y + dir, (b) => { b.cells[y][x + 1].type = { piece: "pawn", color: "empty" }; });
+                        }
+                        break;
+                    }
+                    case "knight": {
+                        for (const [dx, dy] of [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]]) addIfEmptyOrEnemy(x + dx, y + dy);
+                        break;
+                    }
+                    case "bishop": { addSliding(1, 1); addSliding(1, -1); addSliding(-1, 1); addSliding(-1, -1); break; }
+                    case "rook": { addSliding(1, 0); addSliding(-1, 0); addSliding(0, 1); addSliding(0, -1); break; }
+                    case "queen": { addSliding(1, 0); addSliding(-1, 0); addSliding(0, 1); addSliding(0, -1); addSliding(1, 1); addSliding(1, -1); addSliding(-1, 1); addSliding(-1, -1); break; }
+                    case "king": {
+                        for (const [dx, dy] of [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]) addIfEmptyOrEnemy(x + dx, y + dy);
+                        const rank = color === "white" ? 0 : 7;
+                        if (x === 4 && y === rank) {
+                            if (board.canCastle[color].kingside && isEmpty(5, rank) && isEmpty(6, rank)
+                                && board.cells[rank][7].type.piece === "rook" && board.cells[rank][7].type.color === color
+                                && !isAttackedBy(4, rank, enemy) && !isAttackedBy(5, rank, enemy) && !isAttackedBy(6, rank, enemy)) {
+                                addMove(6, rank, (b) => {
+                                    b.cells[rank][5].type = { piece: "rook", color };
+                                    b.cells[rank][7].type = { piece: "pawn", color: "empty" };
+                                    b.canCastle[color].kingside = false;
+                                    b.canCastle[color].queenside = false;
+                                    b.didCastle[color] = true;
+                                });
+                            }
+                            if (board.canCastle[color].queenside && isEmpty(1, rank) && isEmpty(2, rank) && isEmpty(3, rank)
+                                && board.cells[rank][0].type.piece === "rook" && board.cells[rank][0].type.color === color
+                                && !isAttackedBy(4, rank, enemy) && !isAttackedBy(3, rank, enemy) && !isAttackedBy(2, rank, enemy)) {
+                                addMove(2, rank, (b) => {
+                                    b.cells[rank][3].type = { piece: "rook", color };
+                                    b.cells[rank][0].type = { piece: "pawn", color: "empty" };
+                                    b.canCastle[color].kingside = false;
+                                    b.canCastle[color].queenside = false;
+                                    b.didCastle[color] = true;
+                                });
+                            }
+                        }
+                        break;
+                    }
+                }
+                return moves;
+            }
+            _generateLegalMoves(board) {
+                const moves = [];
+                for (let x = 0; x < 8; x++) {
+                    for (let y = 0; y < 8; y++) {
+                        const cell = board.cells[y][x];
+                        if (cell.type.color !== board.turn) continue;
+                        const childBoards = this._getAvailableMovesForCell(cell, { x, y }, board);
+                        for (const b of childBoards) { if (!this._isInCheck(board.turn, b)) moves.push(b); }
+                    }
+                }
+                return moves;
+            }
+            _boardKey(board) {
+                let key = board.turn === "white" ? "w" : "b";
+                const pieceChar = { pawn: "p", knight: "n", bishop: "b", rook: "r", queen: "q", king: "k" };
+                for (let y = 0; y < 8; y++) {
+                    for (let x = 0; x < 8; x++) {
+                        const t = board.cells[y][x].type;
+                        key += t.color === "empty" ? "." : (t.color === "white" ? pieceChar[t.piece].toUpperCase() : pieceChar[t.piece]);
+                    }
+                }
+                key += (board.canCastle.white.kingside ? "K" : "") + (board.canCastle.white.queenside ? "Q" : "")
+                    + (board.canCastle.black.kingside ? "k" : "") + (board.canCastle.black.queenside ? "q" : "");
+                if (board.enpassant) key += board.enpassant.x.toString() + board.enpassant.y.toString();
+                return key;
+            }
+            _quickMaterialCount(board) {
+                let score = 0;
+                const vals = { pawn: 100, knight: 320, bishop: 330, rook: 500, queen: 900, king: 0 };
+                for (let y = 0; y < 8; y++) {
+                    for (let x = 0; x < 8; x++) {
+                        const t = board.cells[y][x].type;
+                        if (t.color === "empty") continue;
+                        score += (t.color === "white" ? 1 : -1) * vals[t.piece];
+                    }
+                }
+                return score;
+            }
+            _alphaBeta(board, depth, alpha, beta, maximizing) {
+                const key = this._boardKey(board);
+                const cached = this._ttable.get(key);
+                if (cached && cached.depth >= depth) return cached.value;
+                if (depth === 0) {
+                    const value = this.getBoardValue(board);
+                    this._ttable.set(key, { value, depth: 0 });
+                    return value;
+                }
+                const legalMoves = this._generateLegalMoves(board);
+                if (legalMoves.length === 0) {
+                    return this._isInCheck(board.turn, board) ? (maximizing ? -1000000 : 1000000) : 0;
+                }
+                legalMoves.sort((a, b) => {
+                    const aVal = this._quickMaterialCount(a), bVal = this._quickMaterialCount(b);
+                    return maximizing ? bVal - aVal : aVal - bVal;
+                });
+                let value;
+                if (maximizing) {
+                    value = -Infinity;
+                    for (const move of legalMoves) {
+                        value = Math.max(value, this._alphaBeta(move, depth - 1, alpha, beta, false));
+                        alpha = Math.max(alpha, value);
+                        if (beta <= alpha) break;
+                    }
+                } else {
+                    value = Infinity;
+                    for (const move of legalMoves) {
+                        value = Math.min(value, this._alphaBeta(move, depth - 1, alpha, beta, true));
+                        beta = Math.min(beta, value);
+                        if (beta <= alpha) break;
+                    }
+                }
+                this._ttable.set(key, { value, depth });
+                return value;
+            }
+            toFEN() {
+                const rows = [];
+                for (let rank = 7; rank >= 0; rank--) {
+                    let rowStr = "", emptyCount = 0;
+                    for (let file = 0; file < 8; file++) {
+                        const cell = this.board.cells[rank][file];
+                        if (cell.type.color === "empty") {
+                            emptyCount++;
+                        } else {
+                            if (emptyCount > 0) { rowStr += emptyCount; emptyCount = 0; }
+                            const pieceMap = { pawn: "p", knight: "n", bishop: "b", rook: "r", queen: "q", king: "k" };
+                            const piece = pieceMap[cell.type.piece];
+                            rowStr += cell.type.color === "white" ? piece.toUpperCase() : piece;
+                        }
+                    }
+                    if (emptyCount > 0) rowStr += emptyCount;
+                    rows.push(rowStr);
+                }
+                const position = rows.join("/");
+                const activeColor = this.board.turn === "white" ? "w" : "b";
+                let castling = "";
+                if (this.board.canCastle.white.kingside) castling += "K";
+                if (this.board.canCastle.white.queenside) castling += "Q";
+                if (this.board.canCastle.black.kingside) castling += "k";
+                if (this.board.canCastle.black.queenside) castling += "q";
+                if (castling === "") castling = "-";
+                let enPassant = "-";
+                if (this.board.enpassant) {
+                    enPassant = "abcdefgh"[this.board.enpassant.x] + (this.board.enpassant.y + 1);
+                }
+                return `${position} ${activeColor} ${castling} ${enPassant} 0 1`;
+            }
+            _parse_fen(fen) {
+                const parts = fen.split(" ");
+                const boardPosition = { x: 0, y: 7 };
+                const toParse = parts[0];
+                for (let i = 0; i < toParse.length; i++) {
+                    const char = toParse[i];
+                    if (/[0-9]/.test(char)) { boardPosition.x += Number(char); continue; }
+                    const cell = this.board.cells[boardPosition.y][boardPosition.x];
+                    if (char !== "/") cell.type.color = /[a-z]/.test(char) ? "black" : "white";
+                    switch (char) {
+                        case "p": case "P": cell.type.piece = "pawn"; break;
+                        case "b": case "B": cell.type.piece = "bishop"; break;
+                        case "n": case "N": cell.type.piece = "knight"; break;
+                        case "r": case "R": cell.type.piece = "rook"; break;
+                        case "k": case "K": cell.type.piece = "king"; break;
+                        case "q": case "Q": cell.type.piece = "queen"; break;
+                        case "/": boardPosition.x = 0; boardPosition.y--; break;
+                        default: throw new Error("Invalid FEN character: " + char);
+                    }
+                    if (char !== "/") boardPosition.x++;
+                }
+                this.board.turn = parts[1] === "w" ? "white" : "black";
+                const canCastle = parts[2];
+                this.board.canCastle = {
+                    white: { kingside: canCastle.includes("K"), queenside: canCastle.includes("Q") },
+                    black: { kingside: canCastle.includes("k"), queenside: canCastle.includes("q") },
+                };
+                if (parts[3] && parts[3] !== "-") {
+                    const file = parts[3].charCodeAt(0) - 97;
+                    const rank = parseInt(parts[3][1]) - 1;
+                    this.board.enpassant = { x: file, y: rank };
+                } else {
+                    this.board.enpassant = null;
+                }
+            }
+            isInCheck(color, board = this.board) { return this._isInCheck(color, board); }
+            toChessNotation(from, to) { return this._toChessNotation(from, to); }
+            getLegalMoves(board = this.board) { return this._generateLegalMoves(board); }
+        }
+
+        // --- Persistent Chessground instance ---
+        let cgInstance = null;
+
+        export function prettyBoard(bot) {
+            const fen = bot.toFEN();
+            if (!cgInstance) {
+                const boardDiv = document.getElementById("boardDiv");
+                cgInstance = Chessground(boardDiv, {
+                    fen,
+                    orientation: "white",
+                    movable: { free: false, color: null },
+                    draggable: { enabled: false },
+                    selectable: { enabled: false },
+                });
+            } else {
+                cgInstance.set({ fen });
+            }
+        }
+
+        function getLegalMoves(bot) {
+            const possibleMoves = bot.getAvailableMoves();
+            return possibleMoves.filter((m) => !bot.isInCheck(bot.board.turn, m.board));
+        }
+        function checkGameOver(bot) {
+            const legal = getLegalMoves(bot);
+            if (legal.length > 0) return null;
+            const inCheck = bot.isInCheck(bot.board.turn, bot.board);
+            if (inCheck) {
+                const winner = bot.board.turn === "white" ? "Black" : "White";
+                return `Checkmate! ${winner} wins! 🏆`;
+            }
+            return "Stalemate — it's a draw! 🤝";
+        }
+        function printStatus(bot) {
+            bot.printBoard();
+            prettyBoard(bot);
+            const gameOver = checkGameOver(bot);
+            if (gameOver) {
+                console.log(`\n${gameOver}\n`);
+            } else {
+                const inCheck = bot.isInCheck(bot.board.turn, bot.board);
+                const checkStr = inCheck ? " ⚠ CHECK!" : "";
+                console.log(`\nTurn: ${bot.board.turn}${checkStr}\n`);
+            }
+        }
+
+        // Stub — no Stockfish in browser
+        async function stockfishEval(fen) {
+            throw new Error("Stockfish not available in browser");
+        }
+
+        let searchDepth = 3;
+        async function main() {
+            console.log("♟  Chess Bot  ♟");
+            console.log("Commands:");
+            console.log("  fen <FEN>     — load a position from FEN");
+            console.log("  export        — export current position as FEN");
+            console.log("  <move>        — make a move (e.g. e4, Nf3, O-O)");
+            console.log("  bot           — let the bot play the current side");
+            console.log("  moves         — list all legal moves");
+            console.log("  eval          — show bot evaluation");
+            console.log("  depth <n>     — set search depth (currently " + searchDepth + ")");
+            console.log("  quit          — exit\n");
+            let bot = new ChessBot();
+            printStatus(bot);
+            while (true) {
+                const input = (await prompt("> ")).trim();
+                if (!input) continue;
+                if (input === "quit" || input === "exit") { console.log("Bye! ♔"); break; }
+                if (input.startsWith("fen ")) {
+                    const fen = input.slice(4).trim();
+                    try { bot = new ChessBot(fen); printStatus(bot); }
+                    catch (e) { console.log(`Invalid FEN: ${e.message}\n`); }
+                    continue;
+                }
+                if (input === "export") { console.log(`FEN: ${bot.toFEN()}\n`); continue; }
+                if (input.startsWith("depth")) {
+                    const parts = input.split(/\s+/);
+                    const n = parseInt(parts[1]);
+                    if (isNaN(n) || n < 1 || n > 10) { console.log(`Usage: depth <1-10>  (current: ${searchDepth})\n`); }
+                    else { searchDepth = n; console.log(`Search depth set to ${searchDepth}\n`); }
+                    continue;
+                }
+                if (input === "moves") {
+                    const legal = getLegalMoves(bot);
+                    const notations = legal.map((m) => bot.toChessNotation(bot.board, m.board));
+                    const unique = [...new Set(notations)].sort();
+                    console.log(`Legal moves (${unique.length}): ${unique.join(", ")}\n`);
+                    continue;
+                }
+                if (input === "eval") {
+                    const val = bot.getBoardValue();
+                    const sign = val >= 0 ? "+" : "";
+                    console.log(`Bot eval:  ${sign}${val} (positive = white advantage)`);
+                    const fen = bot.toFEN();
+                    try {
+                        const sf = await stockfishEval(fen);
+                        if (sf.mate !== null) { console.log(`Stockfish: mate in ${sf.mate}`); }
+                        else { console.log(`Stockfish: ${sf.eval >= 0 ? "+" : ""}${sf.eval} cp  (depth 16)`); }
+                        console.log(`Best move: ${sf.bestMove}`);
+                    } catch (_) {
+                        console.log("Stockfish: (not available in browser)");
+                    }
+                    console.log();
+                    continue;
+                }
+                if (input === "bot") {
+                    if (checkGameOver(bot)) { console.log("Game is already over. Use `fen` to load a new position.\n"); continue; }
+                    console.log(`Bot is thinking (depth ${searchDepth})...`);
+                    const t = performance.now();
+                    const rankedMoves = bot.getRankedMoves(searchDepth);
+                    const elapsed = (performance.now() - t).toFixed(0);
+                    if (rankedMoves.length === 0) { console.log("No legal moves — game over!\n"); continue; }
+                    let played = false;
+                    for (const { notation, board: moveBoard } of rankedMoves) {
+                        if (bot.makeMove(notation)) { console.log(`Bot plays: ${notation}  (${elapsed}ms)`); played = true; break; }
+                    }
+                    if (!played) {
+                        const best = rankedMoves[0];
+                        bot.board = best.board;
+                        console.log(`Bot plays: ${best.notation}  (${elapsed}ms)  [notation fallback]`);
+                    }
+                    printStatus(bot);
+                    continue;
+                }
+                if (checkGameOver(bot)) { console.log("Game is already over. Use `fen` to load a new position.\n"); continue; }
+                const ok = bot.makeMove(input);
+                if (!ok) { console.log(`Illegal or unrecognised move: "${input}". Try "moves" to see legal moves.\n`); continue; }
+                printStatus(bot);
+            }
+        }
+        main();
+    </script>
+</body>
+
+</html>
