@@ -954,22 +954,95 @@
             getLegalMoves(board = this.board) { return this._generateLegalMoves(board); }
         }
 
+        // --- Board helpers ---
+
+        function sqToXY(sq) {
+            return { x: sq.charCodeAt(0) - 97, y: parseInt(sq[1]) - 1 };
+        }
+
+        function findMovedSquares(fromBoard, toBoard) {
+            const turn = fromBoard.turn;
+            let from = null, to = null;
+            for (let y = 0; y < 8; y++) {
+                for (let x = 0; x < 8; x++) {
+                    const fc = fromBoard.cells[y][x].type;
+                    const tc = toBoard.cells[y][x].type;
+                    if (fc.color === turn && tc.color !== turn && !from) from = { x, y };
+                    if (fc.color !== turn && tc.color === turn && !to) to = { x, y };
+                }
+            }
+            return { from, to };
+        }
+
+        function buildDests(bot) {
+            const dests = new Map();
+            const legal = bot._generateLegalMoves(bot.board);
+            for (const moveBoard of legal) {
+                const { from, to } = findMovedSquares(bot.board, moveBoard);
+                if (!from || !to) continue;
+                const fromSq = 'abcdefgh'[from.x] + (from.y + 1);
+                const toSq = 'abcdefgh'[to.x] + (to.y + 1);
+                if (!dests.has(fromSq)) dests.set(fromSq, []);
+                if (!dests.get(fromSq).includes(toSq)) dests.get(fromSq).push(toSq);
+            }
+            return dests;
+        }
+
         // --- Persistent Chessground instance ---
         let cgInstance = null;
+        let currentBot = null;
+
+        function onBoardMove(orig, dest) {
+            const bot = currentBot;
+            if (!bot) return;
+            const from = sqToXY(orig);
+            const to = sqToXY(dest);
+            const prevBoard = bot.board;
+            const legal = bot._generateLegalMoves(prevBoard);
+            const matching = legal.filter(moveBoard => {
+                const { from: mf, to: mt } = findMovedSquares(prevBoard, moveBoard);
+                return mf && mt && mf.x === from.x && mf.y === from.y && mt.x === to.x && mt.y === to.y;
+            });
+            if (matching.length === 0) {
+                // shouldn't happen (dests are pre-filtered) but reset just in case
+                cgInstance.set({ fen: bot.toFEN() });
+                return;
+            }
+            // Multiple matches = promotion; pick queen by default
+            let chosen = matching[0];
+            if (matching.length > 1) {
+                chosen = matching.find(m => {
+                    const { to: mt } = findMovedSquares(prevBoard, m);
+                    return mt && m.cells[mt.y][mt.x].type.piece === 'queen';
+                }) || matching[0];
+            }
+            bot.board = chosen;
+            const notation = bot._toChessNotation(prevBoard, chosen);
+            console.log(`> ${notation}`);
+            printStatus(bot);
+        }
 
         export function prettyBoard(bot) {
+            currentBot = bot;
             const fen = bot.toFEN();
+            const gameOver = getLegalMoves(bot).length === 0;
+            const color = gameOver ? null : bot.board.turn;
+            const dests = gameOver ? new Map() : buildDests(bot);
             if (!cgInstance) {
                 const boardDiv = document.getElementById("boardDiv");
                 cgInstance = Chessground(boardDiv, {
                     fen,
                     orientation: "white",
-                    movable: { free: false, color: null },
-                    draggable: { enabled: false },
-                    selectable: { enabled: false },
+                    movable: {
+                        free: false,
+                        color,
+                        dests,
+                        events: { after: onBoardMove },
+                    },
+                    draggable: { enabled: true },
                 });
             } else {
-                cgInstance.set({ fen });
+                cgInstance.set({ fen, movable: { color, dests } });
             }
         }
 
