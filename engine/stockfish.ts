@@ -31,6 +31,14 @@ export function stockfishEval(fen: string, depth = 16): Promise<{ eval: number; 
                 const bmMatch = output.match(/bestmove (\S+)/);
                 const bestMove = bmMatch ? bmMatch[1] : "?";
 
+                // Stockfish scores are from the perspective of the side to move.
+                // Normalise to always be from white's perspective (positive = white winning).
+                const turn = fen.split(" ")[1];
+                if (turn === "b") {
+                    evalScore = -evalScore;
+                    if (mate !== null) mate = -mate;
+                }
+
                 resolve({eval: evalScore, mate, bestMove});
             }
         });
