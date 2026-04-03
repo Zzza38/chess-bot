@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc",
     "debug": "tsx index.ts",
+    "lichess": "tsx lichess/run.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "type": "module",
@@ -14,6 +15,7 @@
   "license": "ISC",
   "dependencies": {
     "@types/node": "^25.2.1",
+    "dotenv": "^17.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },

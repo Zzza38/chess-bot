@@ -1,10 +1,19 @@
 // @ts-nocheck — Emscripten module typing is dynamic
+import { existsSync } from "node:fs";
 import path from "path";
+import { fileURLToPath } from "node:url";
 
-/* Resolve the engine-wasm directory.
- * process.cwd() in Next.js dev is the web/ directory,
- * so the wasm lives at ../engine-wasm/ */
-const wasmDir = path.resolve(process.cwd(), "..", "engine-wasm");
+function resolveWasmDir(): string {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    if (existsSync(path.join(here, "chess-engine.js"))) return here;
+    const repoRoot = path.join(process.cwd(), "engine-wasm");
+    if (existsSync(path.join(repoRoot, "chess-engine.js"))) return repoRoot;
+    const fromWeb = path.join(process.cwd(), "..", "engine-wasm");
+    if (existsSync(path.join(fromWeb, "chess-engine.js"))) return fromWeb;
+    return here;
+}
+
+const wasmDir = resolveWasmDir();
 
 /* Load the Emscripten glue at runtime (not bundled by Turbopack).
  * createRequire gives us a real Node.js require that the bundler won't trace. */
@@ -239,3 +248,5 @@ export class WasmChessBot {
         return this.mod._engine_get_side() === 0 ? "white" : "black";
     }
 }
+
+export default WasmChessBot;

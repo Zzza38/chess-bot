@@ -517,6 +517,83 @@ export class ChessBot {
         return false;
     }
 
+    /** UCI move (e.g. e2e4, e1g1, e7e8q) for a legal transition from {@code fromBoard} to {@code toBoard}. */
+    toUci(fromBoard: ChessBoard, toBoard: ChessBoard): string {
+        return this._boardPairToUci(fromBoard, toBoard);
+    }
+
+    /** Apply a move in UCI notation if it is legal. */
+    makeUciMove(uci: string): boolean {
+        const want = uci.trim().toLowerCase();
+        if (!want) return false;
+        for (const b of this._generateLegalMoves(this.board)) {
+            if (this._boardPairToUci(this.board, b) === want) {
+                this.board = b;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private _boardPairToUci(fromBoard: ChessBoard, toBoard: ChessBoard): string {
+        const turn = fromBoard.turn;
+        const files = "abcdefgh";
+
+        for (let y = 0; y < 8; y++) {
+            for (let x = 0; x < 8; x++) {
+                if (fromBoard.cells[y][x].type.piece === "king" && fromBoard.cells[y][x].type.color === turn) {
+                    for (let x2 = 0; x2 < 8; x2++) {
+                        if (toBoard.cells[y][x2].type.piece === "king" && toBoard.cells[y][x2].type.color === turn) {
+                            if (Math.abs(x2 - x) === 2) {
+                                return `${files[x]}${y + 1}${files[x2]}${y + 1}`;
+                            }
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        let fromPos: Vector2 | null = null;
+        let toPos: Vector2 | null = null;
+        let movedPiece: ChessPieceType | null = null;
+
+        for (let y = 0; y < 8; y++) {
+            for (let x = 0; x < 8; x++) {
+                const fromCell = fromBoard.cells[y][x];
+                const toCell = toBoard.cells[y][x];
+
+                if (fromCell.type.color === turn && toCell.type.color !== turn) {
+                    if (!fromPos) {
+                        fromPos = {x, y};
+                        movedPiece = fromCell.type;
+                    }
+                }
+
+                if (toCell.type.color === turn && fromCell.type.color !== turn) {
+                    if (!toPos) {
+                        toPos = {x, y};
+                    }
+                }
+            }
+        }
+
+        if (!fromPos || !toPos || !movedPiece) return "";
+
+        let uci = `${files[fromPos.x]}${fromPos.y + 1}${files[toPos.x]}${toPos.y + 1}`;
+        if (movedPiece.piece === "pawn") {
+            const destPiece = toBoard.cells[toPos.y][toPos.x].type.piece;
+            if (destPiece !== "pawn") {
+                const promo: Record<string, string> = {
+                    queen: "q", rook: "r", bishop: "b", knight: "n",
+                };
+                uci += promo[destPiece] ?? "q";
+            }
+        }
+        return uci;
+    }
+
     private _toChessNotation(fromBoard: ChessBoard, toBoard: ChessBoard): string {
         const turn = fromBoard.turn;
 
@@ -1050,6 +1127,15 @@ export class ChessBot {
 
     private _ttable = new Map<string, { value: number; depth: number }>();
 
+    /** Cap TT size so deep searches (e.g. depth 8) cannot grow the Map without bound on one position. */
+    private static readonly _TTABLE_MAX = 120_000;
+
+    private _ttableStore(key: string, value: number, depth: number): void {
+        if (this._ttable.size < ChessBot._TTABLE_MAX) {
+            this._ttable.set(key, { value, depth });
+        }
+    }
+
     private _boardKey(board: ChessBoard): string {
         let key = board.turn === "white" ? "w" : "b";
         const pieceChar: Record<string, string> = {
@@ -1098,7 +1184,7 @@ export class ChessBot {
         // Leaf node — static evaluation
         if (depth === 0) {
             const value = this.getBoardValue(board);
-            this._ttable.set(key, {value, depth: 0});
+            this._ttableStore(key, value, 0);
             return value;
         }
 
@@ -1137,7 +1223,7 @@ export class ChessBot {
             }
         }
 
-        this._ttable.set(key, {value, depth});
+        this._ttableStore(key, value, depth);
         return value;
     }
 
